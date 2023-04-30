@@ -12,13 +12,8 @@ async function bootstrap() {
     logger: process.env.LOG_LEVEL.split(',') as LogLevel[],
   });
 
-  if (process.env.NODE_ENV === 'dev') {
-    app.enableCors();
-  } else if (process.env.NODE_ENV === 'prod') {
-    app.enableCors({
-      origin: [process.env.SITE_ENABLE],
-    });
-  }
+  app.enableCors();
+
   app.setGlobalPrefix(process.env.GLOBAL_API_PREFIX);
 
   const { httpAdapter } = app.get(HttpAdapterHost);

@@ -4,6 +4,7 @@ services:
   app:
     build: .
     environment:
+      - PORT=9000
       - REDIS_HOST=redis
       - REDIS_PORT=6379
       - GLOBAL_API_PREFIX=api/v1

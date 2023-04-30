@@ -1,0 +1,5 @@
+export enum SYMBOL_PAIR {
+  BTCUSDT = 'BTCUSDT',
+  ETHBTC = 'ETHBTC',
+  ETHUSDT = 'ETHUSDT',
+}

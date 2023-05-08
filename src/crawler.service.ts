@@ -63,14 +63,12 @@ export class CrawlerService implements OnModuleInit {
     this.graph.setNode(CURRENCY.BTC); // BTC
     this.graph.setNode(CURRENCY.ETH); // ETH
     // Add edges to the graph
-    this.graph.setEdge(CURRENCY.USDT, CURRENCY.BTC, 1 / Number(this.bestAskBTCUSDT));
-    this.graph.setEdge(CURRENCY.BTC, CURRENCY.USDT, Number(this.bestBidBTCUSDT));
-    this.graph.setEdge(CURRENCY.BTC, CURRENCY.ETH, 1 / Number(this.bestAskETHBTC));
-    this.graph.setEdge(CURRENCY.ETH, CURRENCY.BTC, Number(this.bestBidETHBTC));
-    this.graph.setEdge(CURRENCY.ETH, CURRENCY.USDT, Number(this.bestBidETHUSDT));
-    this.graph.setEdge(CURRENCY.USDT, CURRENCY.ETH, 1 / Number(this.bestAskETHUSDT));
-
-    console.log(this.graph.edges());
+    this.graph.setEdge(CURRENCY.USDT, CURRENCY.BTC, 0);
+    this.graph.setEdge(CURRENCY.BTC, CURRENCY.USDT, 0);
+    this.graph.setEdge(CURRENCY.BTC, CURRENCY.ETH, 0);
+    this.graph.setEdge(CURRENCY.ETH, CURRENCY.BTC, 0);
+    this.graph.setEdge(CURRENCY.ETH, CURRENCY.USDT, 0);
+    this.graph.setEdge(CURRENCY.USDT, CURRENCY.ETH, 0);
   }
 
   private updateEdgeOfGraph(from: string, to: string, newValue: number) {
@@ -172,31 +170,6 @@ export class CrawlerService implements OnModuleInit {
         );
       }
     });
-  }
-
-  private calculateProfitRate() {
-    this.profitRate = new BigNumber(this.bestAskBTCUSDT)
-      .multipliedBy(new BigNumber(this.bestAskETHBTC))
-      .dividedBy(new BigNumber(this.bestBidETHUSDT))
-      .toFixed(6)
-      .toString();
-
-    const profit = this.profitRate === 'NaN' ? BREAK_EVEN : this.profitRate;
-
-    if (Number(profit) > 1) {
-      const now = Date.now();
-      const nowFormat = dayjs(new Date()).format('YYYY-MM-DD HH:mm:ss.SSS');
-      this.count++;
-      const value = `[ ${nowFormat} ] USDT - buy(${Number(this.bestAskBTCUSDT).toFixed(
-        2
-      )}) => BTC - buy(${Number(this.bestAskETHBTC).toFixed(6)}) => ETH - sell(${Number(
-        this.bestBidETHUSDT
-      ).toFixed(4)}) => USDT. Profit rate: ${Number(profit).toFixed(6)}`;
-      this.socketGateway.sendMessage(SOCKET_EVENT.PROFIT_RATE, value);
-      this.logger.debug(`count:: ${this.count}`);
-
-      this.commonService.zAddSortSet(value, now);
-    }
   }
 
   private async calculateArbitrage() {

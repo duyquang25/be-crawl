@@ -213,7 +213,7 @@ export class CrawlerService implements OnModuleInit {
       this.socketGateway.sendMessage(SOCKET_EVENT.PROFIT_RATE, this.profitRate);
       this.logger.debug(`count:: ${this.count}`);
 
-      this.commonService.zAddSortSet(String(profit), Date.now());
+      this.commonService.zAddSortSet(this.profitRate, Date.now());
     }
   }
 

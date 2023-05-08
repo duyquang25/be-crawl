@@ -9,6 +9,8 @@ import { SYMBOL_PAIR } from './common/enum/symbol-pair.enum';
 import BigNumber from 'bignumber.js';
 import { BREAK_EVEN } from './common/constants';
 const dayjs = require('dayjs');
+import { Graph } from '@dagrejs/graphlib';
+import { CURRENCY } from './common/enum/currency.enum';
 
 @Injectable()
 export class CrawlerService implements OnModuleInit {
@@ -25,46 +27,60 @@ export class CrawlerService implements OnModuleInit {
 
   private profitRate: string;
 
+  private graph: Graph;
+
   constructor(
     private readonly commonService: CommonService,
     private readonly socketGateway: SocketGateway
   ) {
-    this.bestBidBTCUSDT = this.commonService.getCache(KEY_REDIS.BestBidBTCUSDT);
-    this.bestAskBTCUSDT = this.commonService.getCache(KEY_REDIS.BestAskBTCUSDT);
-    this.bestBidETHBTC = this.commonService.getCache(KEY_REDIS.BestBidETHBTC);
-    this.bestAskETHBTC = this.commonService.getCache(KEY_REDIS.BestAskETHBTC);
-    this.bestBidETHUSDT = this.commonService.getCache(KEY_REDIS.BestBidETHUSDT);
-    this.bestAskETHUSDT = this.commonService.getCache(KEY_REDIS.BestAskETHUSDT);
-
     this.profitRate = BREAK_EVEN;
+    this.graph = new Graph();
   }
 
   async onModuleInit() {
     this.logger.debug(`Initialization start crawler...`);
 
-    this.innitialize();
+    await this.getRateCache();
+    await this.buildGraph();
 
-    // this.test();
+    await this.start();
 
     this.logger.debug(`End Initialization data...`);
   }
 
-  async test() {
-    setInterval(async () => {
-      const r = (Math.random() + 1).toString(36).substring(7);
-      this.socketGateway.sendMessage('test', r);
-    }, 5000);
+  async getRateCache() {
+    this.bestBidBTCUSDT = await this.commonService.getCache(KEY_REDIS.BestBidBTCUSDT);
+    this.bestAskBTCUSDT = await this.commonService.getCache(KEY_REDIS.BestAskBTCUSDT);
+    this.bestBidETHBTC = await this.commonService.getCache(KEY_REDIS.BestBidETHBTC);
+    this.bestAskETHBTC = await this.commonService.getCache(KEY_REDIS.BestAskETHBTC);
+    this.bestBidETHUSDT = await this.commonService.getCache(KEY_REDIS.BestBidETHUSDT);
+    this.bestAskETHUSDT = await this.commonService.getCache(KEY_REDIS.BestAskETHUSDT);
   }
 
-  private handleWhenTickerChange(
-    rate: string,
-    socketEvent: string,
-    keyRedisRate: string,
-    isRateToCalc: boolean = false
-  ) {
+  async buildGraph() {
+    // Add nodes to the graph
+    this.graph.setNode(CURRENCY.USDT); // USDT
+    this.graph.setNode(CURRENCY.BTC); // BTC
+    this.graph.setNode(CURRENCY.ETH); // ETH
+    // Add edges to the graph
+    this.graph.setEdge(CURRENCY.USDT, CURRENCY.BTC, 1 / Number(this.bestAskBTCUSDT));
+    this.graph.setEdge(CURRENCY.BTC, CURRENCY.USDT, Number(this.bestBidBTCUSDT));
+    this.graph.setEdge(CURRENCY.BTC, CURRENCY.ETH, 1 / Number(this.bestAskETHBTC));
+    this.graph.setEdge(CURRENCY.ETH, CURRENCY.BTC, Number(this.bestBidETHBTC));
+    this.graph.setEdge(CURRENCY.ETH, CURRENCY.USDT, Number(this.bestBidETHUSDT));
+    this.graph.setEdge(CURRENCY.USDT, CURRENCY.ETH, 1 / Number(this.bestAskETHUSDT));
+
+    console.log(this.graph.edges());
+  }
+
+  private updateEdgeOfGraph(from: string, to: string, newValue: number) {
+    this.graph.setEdge(from, to, newValue);
+  }
+
+  private async handleWhenTickerChange(rate: string, socketEvent: string, keyRedisRate: string) {
     this.socketGateway.sendMessage(socketEvent, rate);
     this.commonService.setCache(keyRedisRate, rate);
-    isRateToCalc && this.calculateProfitRate();
+    await this.calculateArbitrage();
   }
 
   private isNewRate(storedRate: string, newRate: string) {
@@ -74,7 +90,7 @@ export class CrawlerService implements OnModuleInit {
     return false;
   }
 
-  private async innitialize() {
+  private async start() {
     const client = Binance() as any;
 
     client.ws.bookTicker(SYMBOL_PAIR.BTCUSDT, async (ticker: Ticker) => {
@@ -83,6 +99,7 @@ export class CrawlerService implements OnModuleInit {
       // when bid rate changes
       if (isNewRateBid) {
         this.bestBidBTCUSDT = ticker.bestBid;
+        this.updateEdgeOfGraph(CURRENCY.BTC, CURRENCY.USDT, Number(this.bestBidBTCUSDT));
         this.handleWhenTickerChange(
           ticker.bestBid,
           SOCKET_EVENT.BID_BTCUSDT,
@@ -94,11 +111,11 @@ export class CrawlerService implements OnModuleInit {
       // when ask rate changes
       if (isNewRateAsk) {
         this.bestAskBTCUSDT = ticker.bestAsk;
+        this.updateEdgeOfGraph(CURRENCY.USDT, CURRENCY.BTC, 1 / Number(this.bestAskBTCUSDT));
         this.handleWhenTickerChange(
           ticker.bestAsk,
           SOCKET_EVENT.ASK_BTCUSDT,
-          KEY_REDIS.BestAskBTCUSDT,
-          false
+          KEY_REDIS.BestAskBTCUSDT
         );
       }
     });
@@ -108,7 +125,8 @@ export class CrawlerService implements OnModuleInit {
       // when bid rate changes
       if (isNewRateBid) {
         this.bestBidETHBTC = ticker.bestBid;
-        this.handleWhenTickerChange(
+        this.updateEdgeOfGraph(CURRENCY.ETH, CURRENCY.BTC, Number(this.bestBidETHBTC));
+        await this.handleWhenTickerChange(
           ticker.bestBid,
           SOCKET_EVENT.BID_ETHBTC,
           KEY_REDIS.BestBidETHBTC
@@ -119,11 +137,12 @@ export class CrawlerService implements OnModuleInit {
       // when ask rate changes
       if (isNewRateAsk) {
         this.bestAskETHBTC = ticker.bestAsk;
-        this.handleWhenTickerChange(
+        this.updateEdgeOfGraph(CURRENCY.BTC, CURRENCY.ETH, 1 / Number(this.bestAskETHBTC));
+
+        await this.handleWhenTickerChange(
           ticker.bestAsk,
           SOCKET_EVENT.ASK_ETHBTC,
-          KEY_REDIS.BestAskETHBTC,
-          true
+          KEY_REDIS.BestAskETHBTC
         );
       }
     });
@@ -133,11 +152,11 @@ export class CrawlerService implements OnModuleInit {
       // when bid rate changes
       if (isNewRateBid) {
         this.bestBidETHUSDT = ticker.bestBid;
-        this.handleWhenTickerChange(
+        this.updateEdgeOfGraph(CURRENCY.ETH, CURRENCY.USDT, Number(this.bestBidETHUSDT));
+        await this.handleWhenTickerChange(
           ticker.bestBid,
           SOCKET_EVENT.BID_ETHUSDT,
-          KEY_REDIS.BestBidETHUSDT,
-          true
+          KEY_REDIS.BestBidETHUSDT
         );
       }
 
@@ -145,6 +164,7 @@ export class CrawlerService implements OnModuleInit {
       // when ask rate changes
       if (isNewRateAsk) {
         this.bestAskETHUSDT = ticker.bestAsk;
+        this.updateEdgeOfGraph(CURRENCY.USDT, CURRENCY.ETH, 1 / Number(this.bestAskETHUSDT));
         this.handleWhenTickerChange(
           ticker.bestAsk,
           SOCKET_EVENT.ASK_ETHUSDT,
@@ -154,16 +174,12 @@ export class CrawlerService implements OnModuleInit {
     });
   }
 
-  calculateProfitRate() {
+  private calculateProfitRate() {
     this.profitRate = new BigNumber(this.bestAskBTCUSDT)
       .multipliedBy(new BigNumber(this.bestAskETHBTC))
       .dividedBy(new BigNumber(this.bestBidETHUSDT))
       .toFixed(6)
       .toString();
-
-    // this.logger.debug(
-    //   `Lợi nhuận::  ${this.profitRate} in timestamps: ${Date.now()}, count: ${this.count}`
-    // );
 
     const profit = this.profitRate === 'NaN' ? BREAK_EVEN : this.profitRate;
 
@@ -181,5 +197,61 @@ export class CrawlerService implements OnModuleInit {
 
       this.commonService.zAddSortSet(value, now);
     }
+  }
+
+  private async calculateArbitrage() {
+    await Promise.all(
+      this.graph.nodes().map(async (node) => {
+        this.calculateArbitrageFromNode(node);
+      })
+    );
+  }
+
+  private calculateArbitrageFromNode(node: string) {
+    const distances = {};
+    const predecessors = {};
+
+    // Initialize distances for each node
+    for (const node of this.graph.nodes()) {
+      distances[node] = Infinity;
+    }
+    distances[node] = 0;
+
+    // Loop |V| to cal distance
+    for (let i = 1; i <= this.graph.nodeCount(); i++) {
+      for (const edge of this.graph.edges()) {
+        const u = edge.v;
+        const v = edge.w;
+        const weight = -Math.log(this.graph.edge(edge)); // Change weight
+
+        if (distances[u] + weight < distances[v]) {
+          distances[v] = distances[u] + weight;
+          predecessors[v] = u;
+        }
+      }
+    }
+
+    // find distance negative
+    if (distances[node] < 0) {
+      const profit = Math.exp(-distances[node]);
+      const path = this.getPath(node, predecessors);
+      this.count++;
+      this.profitRate = `Execution from ${node}: by ${path.join(' -> ')}. Profit rate: ${profit}`;
+      this.socketGateway.sendMessage(SOCKET_EVENT.PROFIT_RATE, this.profitRate);
+      this.logger.debug(`count:: ${this.count}`);
+
+      this.commonService.zAddSortSet(String(profit), Date.now());
+    }
+  }
+
+  private getPath(startNode: string, predecessors: any) {
+    const path = [startNode];
+    let u = predecessors[startNode];
+    while (u !== startNode) {
+      path.unshift(u);
+      u = predecessors[u];
+    }
+    path.unshift(startNode);
+    return path;
   }
 }

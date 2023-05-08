@@ -26,6 +26,7 @@
     "migrate:down": "ts-node ./node_modules/typeorm/cli.js migration:revert"
   },
   "dependencies": {
+    "@dagrejs/graphlib": "^2.1.12",
     "@nestjs/bull": "^0.6.3",
     "@nestjs/common": "^8.0.0",
     "@nestjs/config": "^2.2.0",

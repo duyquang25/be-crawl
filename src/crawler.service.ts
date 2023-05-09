@@ -6,11 +6,12 @@ import { KEY_REDIS } from './common/enum/key-redis.enum';
 import { SocketGateway } from './providers/socket/socket.gateway';
 import { SOCKET_EVENT } from './providers/socket/socket.enum';
 import { SYMBOL_PAIR } from './common/enum/symbol-pair.enum';
-import BigNumber from 'bignumber.js';
 import { BREAK_EVEN } from './common/constants';
 const dayjs = require('dayjs');
 import { Graph } from '@dagrejs/graphlib';
 import { CURRENCY } from './common/enum/currency.enum';
+import { InjectQueue } from '@nestjs/bull';
+import { Queue } from 'bull';
 
 @Injectable()
 export class CrawlerService implements OnModuleInit {
@@ -30,6 +31,8 @@ export class CrawlerService implements OnModuleInit {
   private graph: Graph;
 
   constructor(
+    @InjectQueue('crawl')
+    private jobQueue: Queue,
     private readonly commonService: CommonService,
     private readonly socketGateway: SocketGateway
   ) {
@@ -42,9 +45,33 @@ export class CrawlerService implements OnModuleInit {
     await this.getRateCache();
     await this.buildGraph();
 
-    setTimeout(() => this.start(), 3000);
+    await this.start();
+
+    setTimeout(() => this.handleJob(), 3000);
 
     this.logger.debug(`End Initialization data...`);
+  }
+
+  public async handleJob() {
+    try {
+      await this.jobQueue.add(
+        'crawl',
+        {},
+        {
+          repeat: {
+            every: 1000,
+            limit: 100,
+          },
+          attempts: 5,
+          backoff: 2000,
+          removeOnComplete: true,
+        }
+      );
+      return true;
+    } catch (err) {
+      this.logger.log('Error: ' + err);
+      return false;
+    }
   }
 
   async getRateCache() {
@@ -76,15 +103,11 @@ export class CrawlerService implements OnModuleInit {
 
   private async handleWhenTickerChange(rate: string, socketEvent: string, keyRedisRate: string) {
     this.socketGateway.sendMessage(socketEvent, rate);
-    // this.commonService.setCache(keyRedisRate, rate);
-    await this.calculateArbitrage();
+    this.commonService.setCache(keyRedisRate, rate);
   }
 
   private isNewRate(storedRate: string, newRate: string) {
-    if (newRate !== storedRate) {
-      return true;
-    }
-    return false;
+    return newRate !== storedRate ? true : false;
   }
 
   private start() {
@@ -171,7 +194,7 @@ export class CrawlerService implements OnModuleInit {
     });
   }
 
-  private async calculateArbitrage() {
+  async calculateArbitrage() {
     await Promise.all(
       this.graph.nodes().map(async (node) => {
         this.calculateArbitrageFromNode(node);
@@ -203,17 +226,18 @@ export class CrawlerService implements OnModuleInit {
 
     // find distance negative
     if (distances[node] < 0) {
+      this.count++;
       const profit = Math.exp(-distances[node]);
       const path = this.getPath(node, predecessors);
-      this.count++;
+      console.log('path', path, path.length, path[0], path[3], path[4]);
+      const logs = this.formateLog(path);
       const now = Date.now();
       const nowFormat = dayjs(new Date()).format('YYYY-MM-DD HH:mm:ss.SSS');
-      this.profitRate = `[${nowFormat}] Execution from ${node}: ${path.join(
-        ' -> '
+      this.profitRate = `[${nowFormat}] Execution from ${node}: ${logs.join(
+        ''
       )}. Profit rate: ${profit}`;
       this.socketGateway.sendMessage(SOCKET_EVENT.PROFIT_RATE, this.profitRate);
       this.logger.debug(`count:: ${this.count}`);
-
       this.commonService.zAddSortSet(this.profitRate, now);
     }
   }
@@ -227,5 +251,29 @@ export class CrawlerService implements OnModuleInit {
     }
     path.unshift(startNode);
     return path;
+  }
+
+  // USDT – buy(23.500) –> BTC – buy(0.065731) → ETH – sell(1900.00) → USDT. Profit rate: 1.0325
+  private formateLog(arr: string[]) {
+    const logs = [];
+
+    for (let i = 0; i < arr.length - 1; i++) {
+      logs.push(arr[i]);
+      if (arr[i] === CURRENCY.BTC && arr[i + 1] === CURRENCY.USDT) {
+        logs.push(` - sell(${Number(this.bestBidBTCUSDT).toFixed(2)}) -> `);
+      } else if (arr[i] === CURRENCY.BTC && arr[i + 1] === CURRENCY.ETH) {
+        logs.push(` - buy(${Number(this.bestAskETHBTC).toFixed(6)}) -> `);
+      } else if (arr[i] === CURRENCY.USDT && arr[i + 1] === CURRENCY.BTC) {
+        logs.push(` - buy(${Number(this.bestAskBTCUSDT).toFixed(2)}) -> `);
+      } else if (arr[i] === CURRENCY.USDT && arr[i + 1] === CURRENCY.ETH) {
+        logs.push(` - buy(${Number(this.bestAskETHUSDT).toFixed(3)}) -> `);
+      } else if (arr[i] === CURRENCY.ETH && arr[i + 1] === CURRENCY.BTC) {
+        logs.push(` - sell(${Number(this.bestBidETHBTC).toFixed(6)}) -> `);
+      } else if (arr[i] === CURRENCY.ETH && arr[i + 1] === CURRENCY.USDT) {
+        logs.push(` - sell(${Number(this.bestBidETHUSDT).toFixed(3)}) -> `);
+      }
+    }
+    logs.push(arr[arr.length - 1]);
+    return logs;
   }
 }

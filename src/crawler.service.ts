@@ -60,7 +60,6 @@ export class CrawlerService implements OnModuleInit {
         {
           repeat: {
             every: 1000,
-            limit: 100,
           },
           attempts: 5,
           backoff: 2000,
@@ -229,7 +228,6 @@ export class CrawlerService implements OnModuleInit {
       this.count++;
       const profit = Math.exp(-distances[node]);
       const path = this.getPath(node, predecessors);
-      console.log('path', path, path.length, path[0], path[3], path[4]);
       const logs = this.formateLog(path);
       const now = Date.now();
       const nowFormat = dayjs(new Date()).format('YYYY-MM-DD HH:mm:ss.SSS');

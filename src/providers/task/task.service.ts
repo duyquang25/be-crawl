@@ -8,7 +8,7 @@ export class TaskService {
   private readonly logger = new Logger(TaskService.name);
   constructor(private readonly commonService: CommonService) {}
 
-  @Cron(CronExpression.EVERY_10_MINUTES)
+  @Cron(CronExpression.EVERY_DAY_AT_MIDNIGHT)
   async removeOldLogs() {
     await this.commonService.zDeleteSorSet();
   }
